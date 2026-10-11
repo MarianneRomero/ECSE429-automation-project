@@ -1,0 +1,5 @@
+pytest==8.3.5
+requests==2.32.3
+# urllib3 2.x warns on the LibreSSL build of macOS's system Python 3.9.
+urllib3==1.26.20
+pytest-randomly==3.16.0
