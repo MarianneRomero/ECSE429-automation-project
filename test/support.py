@@ -37,16 +37,15 @@ ALLOW_INSTANCE = {"OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE"}
 ALLOW_RELATIONSHIP_ITEM = {"OPTIONS", "DELETE"}
 
 # Every behaviour that differs from the documentation, keyed by the ID used in the
-# exploratory session notes. BUG-04 and BUG-06 were found while preparing this suite
-# (BUG-05 was withdrawn: one-way relationships are documented).
+# exploratory session notes. BUG-07 and BUG-06 were found while preparing this suite
 BUGS = {
     "BUG-01": "GET/HEAD/POST on relationship item URLs return 404 instead of the documented 405",
     "BUG-02": "400 errors for malformed JSON/XML bodies are labelled Content-Type text/html",
     "BUG-03": "POST to a relationship with a nonexistent id returns 404, Swagger documents 400",
-    "BUG-04": "GET /:id/<relationship> for a nonexistent :id returns every parent's related items",
-    "BUG-06": "XML relationship POST cannot link an existing object: <id> is read as a number, 404",
-    "DOC-01": "PUT /:id is a full replace, but the docs describe it as an amend like POST",
-    "DOC-02": "GET /:id wraps the single object in a list; the docs example shows a bare object",
+    "BUG-04": "PUT /:id is a full replace, but the docs describe it as an amend like POST",
+    "BUG-05": "GET /:id wraps the single object in a list; the docs example shows a bare object", # TODO: for both categories and projects for now, but check if the same case for todos
+    "BUG-06": "XML relationship POST cannot link an existing object: <id> is read as a number, 404", # new bug
+    "BUG-07": "GET /:id/<relationship> for a nonexistent :id returns every parent's related items", # new bug
 }
 
 
@@ -119,7 +118,7 @@ def related_ids(obj, relationship):
 
 
 def get_one(collection, object_id):
-    """The single object behind /collection/:id (unwrapping DOC-02's list)."""
+    """The single object behind /collection/:id (unwrapping BUG-05's list)."""
     response = call("GET", f"/{collection}/{object_id}")
     assert response.status_code == 200, response.text
     return items(response, collection)[0]

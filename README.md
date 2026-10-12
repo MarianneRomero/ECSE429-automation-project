@@ -51,7 +51,7 @@ failure, so the pair gets updated.
 | BUG-01 | GET/HEAD/POST on relationship item URLs return 404 instead of the documented 405 |
 | BUG-02 | 400 errors for malformed JSON/XML bodies are labelled `Content-Type: text/html` |
 | BUG-03 | POST to a relationship with a nonexistent id returns 404, Swagger documents 400 |
-| BUG-04 | `GET /:id/<relationship>` for a nonexistent `:id` returns every parent's related items |
+| BUG-04 | `PUT /:id` is a full replace, but the docs describe it as an amend like POST |
+| BUG-05 | `GET /:id` wraps the single object in a list; the docs example shows a bare object |
 | BUG-06 | XML relationship POST cannot link an existing object: `<id>` is read as a number, 404 |
-| DOC-01 | `PUT /:id` is a full replace, but the docs describe it as an amend like POST |
-| DOC-02 | `GET /:id` wraps the single object in a list; the docs example shows a bare object |
+| BUG-07 | `GET /:id/<relationship>` for a nonexistent `:id` returns every parent's related items |

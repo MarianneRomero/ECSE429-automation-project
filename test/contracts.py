@@ -141,12 +141,12 @@ class InstanceContract:
         assert call(method, f"/{self.PARENT}/{missing_id(self.PARENT)}", body).status_code == 404
         assert snapshot() == before
 
-    @bug("DOC-02", documented=True)
+    @bug("BUG-05", documented=True)
     def test_get_one_returns_a_bare_object_as_documented(self, obj):
         body = call("GET", f"/{self.PARENT}/{obj['id']}").json()
         assert body.get("id") == obj["id"]
 
-    @bug("DOC-02")
+    @bug("BUG-05")
     def test_get_one_returns_a_single_item_list_actual(self, obj):
         body = call("GET", f"/{self.PARENT}/{obj['id']}").json()
         assert list(body) == [self.PARENT]
@@ -228,14 +228,14 @@ class RelationshipContract:
         assert "Could not find thing matching value for id" in response.json()["errorMessages"][0]
         assert snapshot() == before
 
-    @bug("BUG-04", documented=True)
+    @bug("BUG-07", documented=True)
     def test_get_relationship_of_missing_parent_returns_no_items_as_documented(self, linked, missing_id, relationship, child_collection):
         # "return all the ... items related to <parent>, with given id": no such
         # parent, so nothing is related. Either a 404 or an empty list is acceptable.
         response = call("GET", f"/{self.PARENT}/{missing_id(self.PARENT)}/{relationship}")
         assert response.status_code == 404 or items(response, child_collection) == []
 
-    @bug("BUG-04")
+    @bug("BUG-07")
     def test_get_relationship_of_missing_parent_lists_every_parents_items_actual(self, linked, missing_id, relationship, child_collection):
         absent = missing_id(self.PARENT)
         every_parents_items = {
@@ -379,12 +379,12 @@ class XmlContract:
         assert response.status_code == 405
         assert response.text == ""
 
-    @bug("DOC-02", documented=True)
+    @bug("BUG-05", documented=True)
     def test_get_one_returns_a_bare_element_as_documented(self, obj):
         root = xml_root(call("GET", f"/{self.PARENT}/{obj['id']}", accept=XML))
         assert root.tag == self.singular
 
-    @bug("DOC-02")
+    @bug("BUG-05")
     def test_get_one_returns_a_list_wrapper_actual(self, obj):
         root = xml_root(call("GET", f"/{self.PARENT}/{obj['id']}", accept=XML))
         assert root.tag == self.PARENT
