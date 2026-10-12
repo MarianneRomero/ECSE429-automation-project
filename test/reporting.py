@@ -38,7 +38,7 @@ def _terminal(config):
     return config.pluginmanager.get_plugin("terminalreporter")
 
 
-# ---------------------------------------------------------------- labels
+# ================================== labels ==================================
 
 def _section(item):
     parts = item.path.relative_to(item.config.rootpath / "test").parts
@@ -82,7 +82,7 @@ def pytest_collection_modifyitems(items):
         }
 
 
-# ---------------------------------------------------------------- per-test lines
+# ================================== per-test lines ==================================
 
 def pytest_sessionstart(session):
     if _readable_output(session.config):
@@ -138,7 +138,7 @@ def pytest_runtest_logreport(report):
     terminal.write("\n")
 
 
-# ---------------------------------------------------------------- bug summary
+# ================================== bug summary ==================================
 
 def pytest_terminal_summary(terminalreporter):
     """One entry per bug: how many tests show the documented behaviour failing
