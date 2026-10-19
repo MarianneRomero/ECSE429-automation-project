@@ -37,49 +37,44 @@ ALLOW_INSTANCE = {"OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE"}
 ALLOW_RELATIONSHIP_ITEM = {"OPTIONS", "DELETE"}
 
 # Every behaviour that differs from the documentation, keyed by the ID used in the
-# exploratory session notes. BUG-07 and BUG-06 were found while preparing this suite
+# exploratory session notes. BUG-06 and BUG-07 were found while preparing this suite.
 BUGS = {
     "BUG-01": "GET/HEAD/POST on relationship item URLs return 404 instead of the documented 405",
     "BUG-02": "400 errors for malformed JSON/XML bodies are labelled Content-Type text/html",
     "BUG-03": "POST to a relationship with a nonexistent id returns 404, Swagger documents 400",
     "BUG-04": "PUT /:id is a full replace, but the docs describe it as an amend like POST",
-    "BUG-05": "GET /:id wraps the single object in a list; the docs example shows a bare object", # TODO: for both categories and projects for now, but check if the same case for todos
-    "BUG-06": "XML relationship POST cannot link an existing object: <id> is read as a number, 404", # new bug
-    "BUG-07": "GET /:id/<relationship> for a nonexistent :id returns every parent's related items", # new bug
+    "BUG-05": "GET /:id wraps the single object in a list; the docs example shows a bare object",
+    "BUG-06": "XML relationship POST cannot link an existing object: <id> is read as a number, 404",
+    "BUG-07": "GET /:id/<relationship> for a nonexistent :id returns every parent's related items",
 }
 
 
-def bug(bug_id, documented=False):
-    """Tag a test with the bug it demonstrates.
+def documented_behaviour(bug_id):
+    """Mark the test that asserts what the documentation promises.
 
-    documented=True marks the test that asserts what the documentation promises.
     It is a strict xfail: it shows as XFAIL (with the bug ID as the reason) while
     the bug exists, and turns into a failure if the bug is ever fixed, so the pair
     of tests gets revisited.
     """
-    marks = [pytest.mark.bug(bug_id)]
-    if documented:
-        marks.append(pytest.mark.xfail(strict=True, reason=f"{bug_id}: {BUGS[bug_id]}"))
+    xfail = pytest.mark.xfail(strict=True, reason=f"{bug_id}: {BUGS[bug_id]}")
+    return lambda test: pytest.mark.bug(bug_id)(xfail(test))
 
-    def decorate(func):
-        for mark in marks:
-            func = mark(func)
-        return func
 
-    return decorate
+def actual_behaviour(bug_id):
+    """Mark the test that asserts what the server really does. It passes."""
+    return pytest.mark.bug(bug_id)
 
 
 def call(method, path, body=None, accept=JSON, content_type=None, params=None):
-    """Send one request. Dict bodies go out as JSON, string bodies as-is (XML)."""
+    """Send one request. Dict bodies go out as JSON; string bodies go out as-is,
+    labelled with `content_type` (XML unless given)."""
     headers = {"Accept": accept}
     kwargs = {}
     if isinstance(body, dict):
         kwargs["json"] = body
     elif body is not None:
-        headers["Content-Type"] = content_type or XML
         kwargs["data"] = body.encode("utf-8")
-    if content_type:
-        headers["Content-Type"] = content_type
+        headers["Content-Type"] = content_type or XML
     return requests.request(
         method, f"{BASE_URL}{path}", headers=headers, params=params,
         timeout=TIMEOUT, **kwargs,

@@ -113,15 +113,8 @@ def _status(report):
     return None, None
 
 
-def pytest_runtest_logreport(report):
-    config = _CONFIG["config"]
-    if not _readable_output(config) or report.nodeid not in _layout:
-        return
-    word, markup = _status(report)
-    if word is None:
-        return
-    terminal, layout = _terminal(config), _layout[report.nodeid]
-
+def _write_headers(terminal, layout):
+    """Print the section and class headers when the test starts a new one."""
     if layout["section"] != _shown["section"]:
         terminal.write("\n")
         terminal.write_sep("=", layout["section"], cyan=True, bold=True)
@@ -130,12 +123,26 @@ def pytest_runtest_logreport(report):
         terminal.write(f"\n{layout['group']}\n", bold=True)
         _shown["group"] = layout["group"]
 
+
+def _write_test_line(terminal, layout, word, markup):
     terminal.write(f"  {word:<7}", **markup)
     terminal.write(f" {layout['name']}")
     if layout["bug"]:
         kind = "documented behaviour, fails because of the bug" if layout["documented"] else "actual behaviour"
         terminal.write(f"  ← {layout['bug']} ({kind})", yellow=layout["documented"], cyan=not layout["documented"])
     terminal.write("\n")
+
+
+def pytest_runtest_logreport(report):
+    config = _CONFIG["config"]
+    if not _readable_output(config) or report.nodeid not in _layout:
+        return
+    word, markup = _status(report)
+    if word is None:
+        return
+    terminal, layout = _terminal(config), _layout[report.nodeid]
+    _write_headers(terminal, layout)
+    _write_test_line(terminal, layout, word, markup)
 
 
 # ================================== bug summary ==================================

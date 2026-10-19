@@ -1,7 +1,7 @@
 """Todos endpoints with JSON payloads (exploratory session 1).
 
 Endpoint behaviour shared with projects and categories (status codes, OPTIONS,
-404s, relationships, BUG-01/03/04, BUG-05) comes from contracts.py; this module
+404s, relationships, BUG-01/03/05/06/07) comes from contracts.py; this module
 adds what is specific to todos.
 
 Where each documented endpoint is tested:
@@ -23,7 +23,10 @@ of a class docstring is used as its header in the test output (see reporting.py)
 import pytest
 
 from contracts import CollectionContract, InstanceContract, RelationshipContract, relationships_of
-from support import JSON, bug, call, content_type, get_one, ids, items, link, related_ids, snapshot
+from support import (
+    JSON, actual_behaviour, documented_behaviour, call, content_type, get_one, ids, items, link,
+    related_ids, snapshot,
+)
 
 
 class TestTodosCollection(CollectionContract):
@@ -32,10 +35,11 @@ class TestTodosCollection(CollectionContract):
     Inherited from CollectionContract:
         GET /todos                  test_get_lists_created_objects
         HEAD /todos                 test_head_returns_headers_without_body
-        POST /todos                 test_post_returns_201_and_location_header
+        POST /todos                 test_post_returns_201_and_location_of_the_new_object
         POST /todos                 test_post_with_client_supplied_id_returns_400
         PUT/PATCH/DELETE /todos     test_unsupported_methods_return_405_without_side_effects
         OPTIONS /todos              test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS /todos     test_read_only_methods_have_no_side_effects
     """
 
     PARENT = "todos"
@@ -49,7 +53,8 @@ class TestTodosCollection(CollectionContract):
     def test_post_accepts_all_documented_fields(self, create):
         """POST /todos: title, description and doneStatus are all stored."""
         todo = create("todos", title="full", description="all fields", doneStatus=True)
-        assert (todo["title"], todo["description"], todo["doneStatus"]) == ("full", "all fields", "true")
+        stored = get_one("todos", todo["id"])
+        assert (stored["title"], stored["description"], stored["doneStatus"]) == ("full", "all fields", "true")
 
     @pytest.mark.parametrize("body, message", [
         ({"title": ""}, "title : can not be empty"),
@@ -75,13 +80,15 @@ class TestTodoInstance(InstanceContract):
         HEAD /todos/:id             test_head_returns_headers_without_body
         POST /todos/:id             test_post_amends_only_the_given_fields
         POST /todos/:id             test_amend_does_not_change_other_objects
-        PUT /todos/:id              test_put_with_title_returns_200
+        PUT /todos/:id              test_put_replaces_the_title
         DELETE /todos/:id           test_delete_removes_the_object
         DELETE /todos/:id           test_delete_twice_returns_404_the_second_time
         DELETE /todos/:id           test_delete_leaves_other_objects_untouched
         PATCH /todos/:id            test_patch_returns_405_without_side_effects
         OPTIONS /todos/:id          test_options_lists_allowed_methods
-        GET/HEAD/POST/PUT/DELETE    test_nonexistent_id_returns_404
+        GET/HEAD/OPTIONS            test_read_only_methods_have_no_side_effects
+        GET/POST/PUT/DELETE         test_nonexistent_id_returns_404_naming_the_id
+        HEAD                        test_head_on_nonexistent_id_returns_404_without_body
     """
 
     PARENT = "todos"
@@ -96,14 +103,14 @@ class TestTodoInstance(InstanceContract):
         assert call("PUT", f"/todos/{obj['id']}", {"title": "replaced"}).status_code == 200
         assert get_one("todos", obj["id"])["description"] == ""
 
-    @bug("BUG-04", documented=True)
+    @documented_behaviour("BUG-04")
     def test_put_amends_given_fields_as_documented(self, obj):
         """PUT /todos/:id: per the docs, PUT amends only the given fields, so the title survives."""
         response = call("PUT", f"/todos/{obj['id']}", {"description": "only description"})
         assert response.status_code == 200
-        assert get_one("todos", obj["id"])["title"] == "instance under test"
+        assert get_one("todos", obj["id"])["title"] == obj["title"]
 
-    @bug("BUG-04")
+    @actual_behaviour("BUG-04")
     def test_put_without_title_is_rejected_actual(self, obj):
         """PUT /todos/:id: in reality PUT is a full replace, so a body without a title gets 400."""
         response = call("PUT", f"/todos/{obj['id']}", {"description": "only description"})
@@ -171,13 +178,13 @@ class TestTodoMalformedJson:
         assert call("POST", "/todos", self.BROKEN, content_type=JSON).status_code == 400
         assert snapshot() == before
 
-    @bug("BUG-02", documented=True)
+    @documented_behaviour("BUG-02")
     def test_malformed_json_error_is_labelled_json_as_expected(self):
         """POST /todos: the 400 error should have Content-Type application/json."""
         response = call("POST", "/todos", self.BROKEN, content_type=JSON)
         assert content_type(response) == JSON
 
-    @bug("BUG-02")
+    @actual_behaviour("BUG-02")
     def test_malformed_json_error_is_labelled_html_actual(self):
         """POST /todos: the 400 error is actually labelled text/html, though its body is JSON."""
         response = call("POST", "/todos", self.BROKEN, content_type=JSON)
@@ -206,12 +213,14 @@ class TestTodoRelationships(RelationshipContract):
         HEAD                    test_head_returns_headers_without_body
         PUT/PATCH/DELETE        test_unsupported_methods_return_405_without_side_effects
         OPTIONS                 test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS        test_read_only_methods_have_no_side_effects
 
     /todos/:id/<relationship>/:id
         DELETE                  test_delete_item_removes_only_the_link
-        DELETE                  test_delete_missing_item_returns_404
-        PUT/PATCH               test_item_put_and_patch_return_405
+        DELETE                  test_delete_missing_item_returns_404_without_side_effects
+        PUT/PATCH               test_item_put_and_patch_return_405_without_side_effects
         OPTIONS                 test_item_options_lists_only_delete
+        OPTIONS                 test_item_options_has_no_side_effects
         GET/HEAD/POST           test_item_get_head_post_return_405_as_documented (BUG-01, xfail)
         GET/HEAD/POST           test_item_get_head_post_return_404_actual (BUG-01)
     """

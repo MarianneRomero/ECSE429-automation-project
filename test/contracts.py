@@ -15,9 +15,9 @@ through the subclasses.
 import pytest
 
 from support import (
-    ALLOW_COLLECTION, ALLOW_INSTANCE, ALLOW_RELATIONSHIP_ITEM, JSON, RELATIONSHIPS, SINGULAR, XML,
-    allowed, bug, call, content_type, get_one, ids, items, link, related_ids, snapshot,
-    to_xml, xml_fields, xml_root,
+    ALLOW_COLLECTION, ALLOW_INSTANCE, ALLOW_RELATIONSHIP_ITEM, JSON, RELATIONSHIPS, SINGULAR,
+    XML, allowed, actual_behaviour, documented_behaviour, call, content_type, get_one, ids,
+    items, link, related_ids, snapshot, to_xml, xml_fields, xml_root,
 )
 
 
@@ -43,14 +43,18 @@ class CollectionContract:
         assert response.status_code == 200
         assert response.text == ""
 
-    def test_post_returns_201_and_location_header(self):
+    def test_post_returns_201_and_location_of_the_new_object(self):
         response = call("POST", f"/{self.PARENT}", {"title": "located"})
-        new_id = response.json()["id"]
+        created = response.json()
         try:
             assert response.status_code == 201
-            assert response.headers["Location"] == f"{self.PARENT}/{new_id}"
+            location = response.headers["Location"]
+            assert location == f"{self.PARENT}/{created['id']}"
+            located = call("GET", f"/{location}")
+            assert located.status_code == 200
+            assert items(located, self.PARENT) == [created]
         finally:
-            call("DELETE", f"/{self.PARENT}/{new_id}")
+            call("DELETE", f"/{self.PARENT}/{created['id']}")
 
     def test_post_with_client_supplied_id_returns_400(self):
         before = snapshot()
@@ -69,6 +73,13 @@ class CollectionContract:
         response = call("OPTIONS", f"/{self.PARENT}")
         assert response.status_code == 200
         assert allowed(response) == ALLOW_COLLECTION
+
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
+    def test_read_only_methods_have_no_side_effects(self, create, method):
+        create(self.PARENT)
+        before = snapshot()
+        assert call(method, f"/{self.PARENT}").status_code == 200
+        assert snapshot() == before
 
 
 class InstanceContract:
@@ -95,9 +106,9 @@ class InstanceContract:
         assert response.status_code == 200
         amended = get_one(self.PARENT, obj["id"])
         assert amended["description"] == "changed"
-        assert amended["title"] == "instance under test"
+        assert amended["title"] == obj["title"]
 
-    def test_put_with_title_returns_200(self, obj):
+    def test_put_replaces_the_title(self, obj):
         response = call("PUT", f"/{self.PARENT}/{obj['id']}", {"title": "replaced"})
         assert response.status_code == 200
         assert get_one(self.PARENT, obj["id"])["title"] == "replaced"
@@ -133,20 +144,39 @@ class InstanceContract:
         assert response.status_code == 200
         assert allowed(response) == ALLOW_INSTANCE
 
-    @pytest.mark.parametrize("method, body", [
-        ("GET", None), ("HEAD", None), ("POST", {"title": "x"}), ("PUT", {"title": "x"}), ("DELETE", None),
-    ])
-    def test_nonexistent_id_returns_404(self, missing_id, method, body):
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
+    def test_read_only_methods_have_no_side_effects(self, obj, method):
         before = snapshot()
-        assert call(method, f"/{self.PARENT}/{missing_id(self.PARENT)}", body).status_code == 404
+        assert call(method, f"/{self.PARENT}/{obj['id']}").status_code == 200
         assert snapshot() == before
 
-    @bug("BUG-05", documented=True)
+    # Each method words its 404 differently.
+    @pytest.mark.parametrize("method, body, message", [
+        ("GET", None, "Could not find an instance with {parent}/{id}"),
+        ("POST", {"title": "x"}, "No such {singular} entity instance with GUID or ID {id} found"),
+        ("PUT", {"title": "x"}, "Invalid GUID for {id} entity {singular}"),
+        ("DELETE", None, "Could not find any instances with {parent}/{id}"),
+    ], ids=["GET", "POST", "PUT", "DELETE"])
+    def test_nonexistent_id_returns_404_naming_the_id(self, missing_id, method, body, message):
+        absent = missing_id(self.PARENT)
+        before = snapshot()
+        response = call(method, f"/{self.PARENT}/{absent}", body)
+        assert response.status_code == 404
+        expected = message.format(parent=self.PARENT, singular=SINGULAR[self.PARENT], id=absent)
+        assert response.json()["errorMessages"] == [expected]
+        assert snapshot() == before
+
+    def test_head_on_nonexistent_id_returns_404_without_body(self, missing_id):
+        response = call("HEAD", f"/{self.PARENT}/{missing_id(self.PARENT)}")
+        assert response.status_code == 404
+        assert response.text == ""
+
+    @documented_behaviour("BUG-05")
     def test_get_one_returns_a_bare_object_as_documented(self, obj):
         body = call("GET", f"/{self.PARENT}/{obj['id']}").json()
         assert body.get("id") == obj["id"]
 
-    @bug("BUG-05")
+    @actual_behaviour("BUG-05")
     def test_get_one_returns_a_single_item_list_actual(self, obj):
         body = call("GET", f"/{self.PARENT}/{obj['id']}").json()
         assert list(body) == [self.PARENT]
@@ -210,16 +240,29 @@ class RelationshipContract:
         assert response.status_code == 200
         assert allowed(response) == ALLOW_COLLECTION
 
+    @pytest.mark.parametrize("method", ["GET", "HEAD", "OPTIONS"])
+    def test_read_only_methods_have_no_side_effects(self, linked, method, relationship, child_collection):
+        parent, _ = linked
+        before = snapshot()
+        assert call(method, self.path(parent, relationship)).status_code == 200
+        assert snapshot() == before
+
+    def test_item_options_has_no_side_effects(self, linked, relationship, child_collection):
+        parent, child = linked
+        before = snapshot()
+        assert call("OPTIONS", self.path(parent, relationship, child)).status_code == 200
+        assert snapshot() == before
+
     def test_duplicate_post_does_not_duplicate_relationship(self, linked, relationship, child_collection):
         parent, child = linked
         assert link(self.PARENT, parent["id"], relationship, child["id"]).status_code == 201
         assert len(items(call("GET", self.path(parent, relationship)), child_collection)) == 1
 
-    @bug("BUG-03", documented=True)
+    @documented_behaviour("BUG-03")
     def test_post_nonexistent_child_returns_400_as_documented(self, parent, missing_id, relationship, child_collection):
         assert link(self.PARENT, parent["id"], relationship, missing_id(child_collection)).status_code == 400
 
-    @bug("BUG-03")
+    @actual_behaviour("BUG-03")
     def test_post_nonexistent_child_returns_404_actual(self, parent, missing_id, relationship, child_collection):
         absent = missing_id(child_collection)
         before = snapshot()
@@ -228,27 +271,32 @@ class RelationshipContract:
         assert "Could not find thing matching value for id" in response.json()["errorMessages"][0]
         assert snapshot() == before
 
-    @bug("BUG-07", documented=True)
-    def test_get_relationship_of_missing_parent_returns_no_items_as_documented(self, linked, missing_id, relationship, child_collection):
+    @documented_behaviour("BUG-07")
+    def test_get_relationship_of_missing_parent_returns_no_items_as_documented(
+            self, linked, missing_id, relationship, child_collection):
         # "return all the ... items related to <parent>, with given id": no such
         # parent, so nothing is related. Either a 404 or an empty list is acceptable.
         response = call("GET", f"/{self.PARENT}/{missing_id(self.PARENT)}/{relationship}")
         assert response.status_code == 404 or items(response, child_collection) == []
 
-    @bug("BUG-07")
-    def test_get_relationship_of_missing_parent_lists_every_parents_items_actual(self, linked, missing_id, relationship, child_collection):
+    @actual_behaviour("BUG-07")
+    def test_get_relationship_of_missing_parent_lists_every_parents_items_actual(
+            self, linked, missing_id, relationship, child_collection):
+        _, child = linked
         absent = missing_id(self.PARENT)
+        before = snapshot()
         every_parents_items = {
-            ref["id"]
-            for parent in items(call("GET", f"/{self.PARENT}"), self.PARENT)
-            for ref in parent.get(relationship, [])
+            child_id
+            for parent in before[self.PARENT].values()
+            for child_id in parent.get(relationship, [])
         }
         response = call("GET", f"/{self.PARENT}/{absent}/{relationship}")
         assert response.status_code == 200
         assert ids(items(response, child_collection)) == every_parents_items
-        assert linked[1]["id"] in every_parents_items
+        assert child["id"] in every_parents_items
+        assert snapshot() == before
 
-    @bug("BUG-06")
+    @actual_behaviour("BUG-06")
     def test_post_numeric_json_id_is_not_matched(self, parent, create, relationship, child_collection):
         # Root cause of BUG-06: ids are strings, and a numeric id is never matched.
         child = create(child_collection)
@@ -265,14 +313,18 @@ class RelationshipContract:
         assert related_ids(get_one(self.PARENT, parent["id"]), relationship) == set()
         assert get_one(child_collection, child["id"]) == child
 
-    def test_delete_missing_item_returns_404(self, parent, create, relationship, child_collection):
+    def test_delete_missing_item_returns_404_without_side_effects(self, parent, create, relationship, child_collection):
         child = create(child_collection)
+        before = snapshot()
         assert call("DELETE", self.path(parent, relationship, child)).status_code == 404
+        assert snapshot() == before
 
     @pytest.mark.parametrize("method", ["PUT", "PATCH"])
-    def test_item_put_and_patch_return_405(self, linked, method, relationship, child_collection):
+    def test_item_put_and_patch_return_405_without_side_effects(self, linked, method, relationship, child_collection):
         parent, child = linked
+        before = snapshot()
         assert call(method, self.path(parent, relationship, child)).status_code == 405
+        assert snapshot() == before
 
     def test_item_options_lists_only_delete(self, linked, relationship, child_collection):
         parent, child = linked
@@ -280,13 +332,13 @@ class RelationshipContract:
         assert response.status_code == 200
         assert allowed(response) == ALLOW_RELATIONSHIP_ITEM
 
-    @bug("BUG-01", documented=True)
+    @documented_behaviour("BUG-01")
     @pytest.mark.parametrize("method", ["GET", "HEAD", "POST"])
     def test_item_get_head_post_return_405_as_documented(self, linked, method, relationship, child_collection):
         parent, child = linked
         assert call(method, self.path(parent, relationship, child)).status_code == 405
 
-    @bug("BUG-01")
+    @actual_behaviour("BUG-01")
     @pytest.mark.parametrize("method", ["GET", "HEAD", "POST"])
     def test_item_get_head_post_return_404_actual(self, linked, method, relationship, child_collection):
         parent, child = linked
@@ -349,7 +401,7 @@ class XmlContract:
         assert response.status_code == 200
         assert xml_fields(xml_root(response))["description"] == "changed by xml"
         amended = get_one(self.PARENT, obj["id"])
-        assert (amended["title"], amended["description"]) == ("xml under test", "changed by xml")
+        assert (amended["title"], amended["description"]) == (obj["title"], "changed by xml")
 
     def test_put_xml_body_replaces_object(self, obj):
         body = to_xml(self.singular, {"title": "replaced by xml"})
@@ -368,10 +420,10 @@ class XmlContract:
         assert f"Could not find an instance with {self.PARENT}/{absent}" in root.findtext("errorMessage")
 
     def test_filter_query_answered_in_xml(self, obj):
-        response = call("GET", f"/{self.PARENT}", accept=XML, params={"title": "xml under test"})
+        response = call("GET", f"/{self.PARENT}", accept=XML, params={"title": obj["title"]})
         assert response.status_code == 200
         assert obj["id"] in {child.findtext("id") for child in xml_root(response)}
-        assert {child.findtext("title") for child in xml_root(response)} == {"xml under test"}
+        assert {child.findtext("title") for child in xml_root(response)} == {obj["title"]}
 
     @pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
     def test_unsupported_method_returns_405_with_empty_body(self, method):
@@ -379,12 +431,12 @@ class XmlContract:
         assert response.status_code == 405
         assert response.text == ""
 
-    @bug("BUG-05", documented=True)
+    @documented_behaviour("BUG-05")
     def test_get_one_returns_a_bare_element_as_documented(self, obj):
         root = xml_root(call("GET", f"/{self.PARENT}/{obj['id']}", accept=XML))
         assert root.tag == self.singular
 
-    @bug("BUG-05")
+    @actual_behaviour("BUG-05")
     def test_get_one_returns_a_list_wrapper_actual(self, obj):
         root = xml_root(call("GET", f"/{self.PARENT}/{obj['id']}", accept=XML))
         assert root.tag == self.PARENT
@@ -427,14 +479,15 @@ class XmlRelationshipContract:
         finally:
             call("DELETE", f"/{child_collection}/{new_id}")
 
-    @bug("BUG-06", documented=True)
+    @documented_behaviour("BUG-06")
     def test_post_xml_body_creates_relationship_as_documented(self, parent, create, relationship, child_collection):
         child = create(child_collection)
         body = to_xml(SINGULAR[child_collection], {"id": child["id"]})
         response = call("POST", f"/{self.PARENT}/{parent['id']}/{relationship}", body)
         assert response.status_code == 201
+        assert related_ids(get_one(self.PARENT, parent["id"]), relationship) == {child["id"]}
 
-    @bug("BUG-06")
+    @actual_behaviour("BUG-06")
     def test_post_xml_body_cannot_find_existing_child_actual(self, parent, create, relationship, child_collection):
         child = create(child_collection)
         body = to_xml(SINGULAR[child_collection], {"id": child["id"]})

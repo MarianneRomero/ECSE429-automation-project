@@ -21,7 +21,10 @@ of a class docstring is used as its header in the test output (see reporting.py)
 import pytest
 
 from contracts import CollectionContract, InstanceContract, RelationshipContract, relationships_of
-from support import bug, call, get_one, ids, items, link, related_ids, snapshot
+from support import (
+    actual_behaviour, documented_behaviour, call, get_one, ids, items, link, related_ids,
+    snapshot,
+)
 
 
 class TestProjectsCollection(CollectionContract):
@@ -30,10 +33,11 @@ class TestProjectsCollection(CollectionContract):
     Inherited from CollectionContract:
         GET /projects                   test_get_lists_created_objects
         HEAD /projects                  test_head_returns_headers_without_body
-        POST /projects                  test_post_returns_201_and_location_header
+        POST /projects                  test_post_returns_201_and_location_of_the_new_object
         POST /projects                  test_post_with_client_supplied_id_returns_400
         PUT/PATCH/DELETE /projects      test_unsupported_methods_return_405_without_side_effects
         OPTIONS /projects               test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS /projects      test_read_only_methods_have_no_side_effects
     """
 
     PARENT = "projects"
@@ -52,8 +56,10 @@ class TestProjectsCollection(CollectionContract):
 
     def test_post_accepts_all_documented_fields(self, create):
         """POST /projects: title, description, active and completed are all stored."""
-        project = create("projects", title="full", description="d", active=True, completed=True)
-        assert (project["active"], project["completed"]) == ("true", "true")
+        project = create("projects", title="full", description="all fields", active=True, completed=True)
+        stored = get_one("projects", project["id"])
+        assert (stored["title"], stored["description"], stored["active"], stored["completed"]) == (
+            "full", "all fields", "true", "true")
 
     @pytest.mark.parametrize("field", ["completed", "active"])
     def test_non_boolean_flag_returns_400_without_side_effects(self, field):
@@ -75,13 +81,15 @@ class TestProjectInstance(InstanceContract):
         HEAD /projects/:id              test_head_returns_headers_without_body
         POST /projects/:id              test_post_amends_only_the_given_fields
         POST /projects/:id              test_amend_does_not_change_other_objects
-        PUT /projects/:id               test_put_with_title_returns_200
+        PUT /projects/:id               test_put_replaces_the_title
         DELETE /projects/:id            test_delete_removes_the_object
         DELETE /projects/:id            test_delete_twice_returns_404_the_second_time
         DELETE /projects/:id            test_delete_leaves_other_objects_untouched
         PATCH /projects/:id             test_patch_returns_405_without_side_effects
         OPTIONS /projects/:id           test_options_lists_allowed_methods
-        GET/HEAD/POST/PUT/DELETE        test_nonexistent_id_returns_404
+        GET/HEAD/OPTIONS /projects/:id  test_read_only_methods_have_no_side_effects
+        GET/POST/PUT/DELETE             test_nonexistent_id_returns_404_naming_the_id
+        HEAD                            test_head_on_nonexistent_id_returns_404_without_body
     """
 
     PARENT = "projects"
@@ -97,13 +105,13 @@ class TestProjectInstance(InstanceContract):
         assert response.status_code == 400
         assert get_one("projects", obj["id"]) == obj
 
-    @bug("BUG-04", documented=True)
+    @documented_behaviour("BUG-04")
     def test_put_amends_given_fields_as_documented(self, obj):
         """PUT /projects/:id: per the docs, PUT amends only the given fields, so the description survives."""
         assert call("PUT", f"/projects/{obj['id']}", {"title": "replaced"}).status_code == 200
-        assert get_one("projects", obj["id"])["description"] == "original"
+        assert get_one("projects", obj["id"])["description"] == obj["description"]
 
-    @bug("BUG-04")
+    @actual_behaviour("BUG-04")
     def test_put_replaces_and_clears_missing_fields_actual(self, obj):
         """PUT /projects/:id: in reality PUT is a full replace, so the description is cleared."""
         assert call("PUT", f"/projects/{obj['id']}", {"title": "replaced"}).status_code == 200
@@ -152,12 +160,14 @@ class TestProjectRelationships(RelationshipContract):
         HEAD                    test_head_returns_headers_without_body
         PUT/PATCH/DELETE        test_unsupported_methods_return_405_without_side_effects
         OPTIONS                 test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS        test_read_only_methods_have_no_side_effects
 
     /projects/:id/<relationship>/:id
         DELETE                  test_delete_item_removes_only_the_link
-        DELETE                  test_delete_missing_item_returns_404
-        PUT/PATCH               test_item_put_and_patch_return_405
+        DELETE                  test_delete_missing_item_returns_404_without_side_effects
+        PUT/PATCH               test_item_put_and_patch_return_405_without_side_effects
         OPTIONS                 test_item_options_lists_only_delete
+        OPTIONS                 test_item_options_has_no_side_effects
         GET/HEAD/POST           test_item_get_head_post_return_405_as_documented (BUG-01, xfail)
         GET/HEAD/POST           test_item_get_head_post_return_404_actual (BUG-01)
     """

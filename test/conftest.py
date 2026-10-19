@@ -21,19 +21,37 @@ from reporting import (  # noqa: F401
 )
 
 
+RESOURCES = ("todos", "projects", "categories")
+
+
+def _not_ready_reason():
+    """Why the API cannot be tested, or None when it is ready."""
+    for collection in RESOURCES:
+        url = f"{BASE_URL}/{collection}"
+        try:
+            response = call("GET", f"/{collection}")
+        except requests.RequestException as error:
+            return f"could not reach {url} ({type(error).__name__})"
+        if response.status_code != 200:
+            return f"{url} answered {response.status_code}; is this the Todo Manager?"
+        try:
+            body = response.json()
+        except ValueError:
+            return f"{url} did not answer with JSON; is this the Todo Manager?"
+        if not isinstance(body, dict) or collection not in body:
+            return f"{url} answered without a list of {collection}; is this the Todo Manager?"
+    return None
+
+
 @pytest.fixture(scope="session", autouse=True)
 def api_ready():
     """Ensure the system is ready to be tested before any test runs."""
-    try:
-        response = requests.get(f"{BASE_URL}/todos", timeout=5)
-    except requests.ConnectionError:
+    reason = _not_ready_reason()
+    if reason:
         pytest.exit(
-            f"Todo Manager API is not running at {BASE_URL}. "
-            "Start it with: java -jar runTodoManagerRestAPI-1.5.5.jar",
+            f"System not ready: {reason}. Start it with: java -jar runTodoManagerRestAPI-1.5.5.jar",
             returncode=3,
         )
-    if response.status_code != 200 or "todos" not in response.json():
-        pytest.exit(f"{BASE_URL}/todos answered {response.status_code}; is this the Todo Manager?", returncode=3)
 
 
 @pytest.fixture

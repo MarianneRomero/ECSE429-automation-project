@@ -22,7 +22,10 @@ of a class docstring is used as its header in the test output (see reporting.py)
 import pytest
 
 from contracts import CollectionContract, InstanceContract, RelationshipContract, relationships_of
-from support import bug, call, get_one, ids, items, link, related_ids, snapshot
+from support import (
+    actual_behaviour, documented_behaviour, call, get_one, ids, items, link, related_ids,
+    snapshot,
+)
 
 
 class TestCategoriesCollection(CollectionContract):
@@ -31,10 +34,11 @@ class TestCategoriesCollection(CollectionContract):
     Inherited from CollectionContract:
         GET /categories                 test_get_lists_created_objects
         HEAD /categories                test_head_returns_headers_without_body
-        POST /categories                test_post_returns_201_and_location_header
+        POST /categories                test_post_returns_201_and_location_of_the_new_object
         POST /categories                test_post_with_client_supplied_id_returns_400
         PUT/PATCH/DELETE /categories    test_unsupported_methods_return_405_without_side_effects
         OPTIONS /categories             test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS /categories    test_read_only_methods_have_no_side_effects
     """
 
     PARENT = "categories"
@@ -46,9 +50,11 @@ class TestCategoriesCollection(CollectionContract):
         assert get_one("categories", category["id"]) == category
 
     def test_duplicate_titles_are_accepted(self, create):
-        """POST /categories: two categories may share a title; they get different ids."""
+        """POST /categories: two categories may share a title; both are stored, with different ids."""
         first, second = create("categories", title="same"), create("categories", title="same")
         assert first["id"] != second["id"]
+        assert get_one("categories", first["id"])["title"] == "same"
+        assert get_one("categories", second["id"])["title"] == "same"
 
     @pytest.mark.parametrize("body, message", [
         ({"title": ""}, "title : can not be empty"),
@@ -73,25 +79,27 @@ class TestCategoryInstance(InstanceContract):
         HEAD /categories/:id            test_head_returns_headers_without_body
         POST /categories/:id            test_post_amends_only_the_given_fields
         POST /categories/:id            test_amend_does_not_change_other_objects
-        PUT /categories/:id             test_put_with_title_returns_200
+        PUT /categories/:id             test_put_replaces_the_title
         DELETE /categories/:id          test_delete_removes_the_object
         DELETE /categories/:id          test_delete_twice_returns_404_the_second_time
         DELETE /categories/:id          test_delete_leaves_other_objects_untouched
         PATCH /categories/:id           test_patch_returns_405_without_side_effects
         OPTIONS /categories/:id         test_options_lists_allowed_methods
-        GET/HEAD/POST/PUT/DELETE        test_nonexistent_id_returns_404
+        GET/HEAD/OPTIONS                test_read_only_methods_have_no_side_effects
+        GET/POST/PUT/DELETE             test_nonexistent_id_returns_404_naming_the_id
+        HEAD                            test_head_on_nonexistent_id_returns_404_without_body
     """
 
     PARENT = "categories"
 
-    @bug("BUG-04", documented=True)
+    @documented_behaviour("BUG-04")
     def test_put_amends_given_fields_as_documented(self, obj):
         """PUT /categories/:id: per the docs, PUT amends only the given fields, so the title survives."""
         response = call("PUT", f"/categories/{obj['id']}", {"description": "only description"})
         assert response.status_code == 200
-        assert get_one("categories", obj["id"])["title"] == "instance under test"
+        assert get_one("categories", obj["id"])["title"] == obj["title"]
 
-    @bug("BUG-04")
+    @actual_behaviour("BUG-04")
     def test_put_without_title_is_rejected_actual(self, obj):
         """PUT /categories/:id: in reality PUT is a full replace, so a body without a title gets 400."""
         response = call("PUT", f"/categories/{obj['id']}", {"description": "only description"})
@@ -138,12 +146,14 @@ class TestCategoryRelationships(RelationshipContract):
         HEAD                    test_head_returns_headers_without_body
         PUT/PATCH/DELETE        test_unsupported_methods_return_405_without_side_effects
         OPTIONS                 test_options_lists_allowed_methods
+        GET/HEAD/OPTIONS        test_read_only_methods_have_no_side_effects
 
     /categories/:id/<relationship>/:id
         DELETE                  test_delete_item_removes_only_the_link
-        DELETE                  test_delete_missing_item_returns_404
-        PUT/PATCH               test_item_put_and_patch_return_405
+        DELETE                  test_delete_missing_item_returns_404_without_side_effects
+        PUT/PATCH               test_item_put_and_patch_return_405_without_side_effects
         OPTIONS                 test_item_options_lists_only_delete
+        OPTIONS                 test_item_options_has_no_side_effects
         GET/HEAD/POST           test_item_get_head_post_return_405_as_documented (BUG-01, xfail)
         GET/HEAD/POST           test_item_get_head_post_return_404_actual (BUG-01)
     """

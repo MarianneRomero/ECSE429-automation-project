@@ -25,12 +25,12 @@ sub-header per endpoint (`test/reporting.py`). Use `-v` for pytest's standard ou
 
 | Path | Contents |
 |---|---|
-| `test/support.py` | HTTP helpers, bug registry (`BUGS`) and the `@bug` decorator |
-| `test/conftest.py` | Readiness check, `create` / `missing_id` fixtures with cleanup, bug summary |
+| `test/support.py` | HTTP helpers, bug registry (`BUGS`), `@documented_behaviour` / `@actual_behaviour` |
+| `test/conftest.py` | Readiness check, `create` / `missing_id` fixtures with cleanup |
+| `test/reporting.py` | Grouped terminal output and the bug summary |
 | `test/contracts.py` | Behaviour shared by todos, projects and categories |
 | `test/json_endpoints/<resource>/` | JSON tests per resource |
 | `test/xml_endpoints/<resource>/` | XML tests per resource |
-| `test/test_docs.py` | `/docs` and `/docs/swagger` |
 
 `/shutdown` is not tested, since it stops the server.
 

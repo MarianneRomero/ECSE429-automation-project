@@ -19,7 +19,10 @@ import json
 import pytest
 
 from contracts import XmlContract, XmlRelationshipContract, relationships_of
-from support import XML, bug, call, content_type, snapshot, to_xml, xml_fields, xml_root
+from support import (
+    XML, actual_behaviour, documented_behaviour, call, content_type, snapshot, to_xml,
+    xml_fields, xml_root,
+)
 
 
 class TestTodosXml(XmlContract):
@@ -79,20 +82,20 @@ class TestTodoMalformedXml:
         assert call("POST", "/todos", self.BROKEN, accept=XML).status_code == 400
         assert snapshot() == before
 
-    @bug("BUG-02", documented=True)
+    @documented_behaviour("BUG-02")
     def test_malformed_xml_error_is_labelled_xml_as_expected(self):
         """POST /todos: the 400 error should have Content-Type application/xml."""
         response = call("POST", "/todos", self.BROKEN, accept=XML)
         assert content_type(response) == XML
 
-    @bug("BUG-02")
+    @actual_behaviour("BUG-02")
     def test_malformed_xml_error_is_labelled_html_actual(self):
         """POST /todos: the 400 error is actually labelled text/html, though its body is XML."""
         response = call("POST", "/todos", self.BROKEN, accept=XML)
         assert content_type(response) == "text/html"
         assert "Mismatched title and todo" in xml_root(response).findtext("errorMessage")
 
-    @bug("BUG-02")
+    @actual_behaviour("BUG-02")
     def test_malformed_xml_error_without_accept_is_json_labelled_html_actual(self):
         """POST /todos without an Accept header: the 400 error body is JSON but labelled text/html."""
         response = call("POST", "/todos", self.BROKEN, content_type=XML)
