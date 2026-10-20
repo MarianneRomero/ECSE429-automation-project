@@ -12,6 +12,8 @@ The class names here don't start with "Test", so pytest only collects them
 through the subclasses.
 """
 
+from collections import Counter
+
 import pytest
 
 from support import (
@@ -281,19 +283,23 @@ class RelationshipContract:
 
     @actual_behaviour("BUG-07")
     def test_get_relationship_of_missing_parent_lists_every_parents_items_actual(
-            self, linked, missing_id, relationship, child_collection):
+            self, linked, create, missing_id, relationship, child_collection):
+        # The items are concatenated per parent, not de-duplicated: link a second
+        # parent to the same child so it is guaranteed to appear twice.
         _, child = linked
+        other_parent = create(self.PARENT)
+        assert link(self.PARENT, other_parent["id"], relationship, child["id"]).status_code == 201
         absent = missing_id(self.PARENT)
         before = snapshot()
-        every_parents_items = {
+        every_parents_items = Counter(
             child_id
             for parent in before[self.PARENT].values()
             for child_id in parent.get(relationship, [])
-        }
+        )
         response = call("GET", f"/{self.PARENT}/{absent}/{relationship}")
         assert response.status_code == 200
-        assert ids(items(response, child_collection)) == every_parents_items
-        assert child["id"] in every_parents_items
+        assert Counter(obj["id"] for obj in items(response, child_collection)) == every_parents_items
+        assert every_parents_items[child["id"]] == 2
         assert snapshot() == before
 
     @actual_behaviour("BUG-06")

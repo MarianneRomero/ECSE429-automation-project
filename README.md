@@ -54,4 +54,4 @@ failure, so the pair gets updated.
 | BUG-04 | `PUT /:id` is a full replace, but the docs describe it as an amend like POST |
 | BUG-05 | `GET /:id` wraps the single object in a list; the docs example shows a bare object |
 | BUG-06 | XML relationship POST cannot link an existing object: `<id>` is read as a number, 404 |
-| BUG-07 | `GET /:id/<relationship>` for a nonexistent `:id` returns every parent's related items |
+| BUG-07 | `GET /:id/<relationship>` for a nonexistent `:id` returns every parent's related items, with duplicates |
