@@ -21,6 +21,10 @@ or use `-p no:randomly` to run in file order (each documented/actual pair then s
 Output is grouped under a header per format and resource (e.g. `JSON · Todos`) and a
 sub-header per endpoint (`test/reporting.py`). Use `-v` for pytest's standard output.
 
+### Performance testing
+
+Whith the API running, run the following command from the project root: `./performance/run_all.sh`
+
 ## Layout
 
 | Path | Contents |
