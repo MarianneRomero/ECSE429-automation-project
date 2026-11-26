@@ -17,10 +17,12 @@ Stop it with Ctrl-C.
 
 import argparse
 import csv
+import os
 import signal
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import psutil
 
@@ -29,8 +31,24 @@ FIELDS = ["timestamp", "sys_cpu_pct", "java_cpu_pct", "avail_mem_mb", "java_rss_
 MB = 1024 * 1024
 
 
+def api_port():
+    """Port of the API under test (TODO_API_URL, as in Part A; default 4567)."""
+    url = urlparse(os.environ.get("TODO_API_URL", "http://localhost:4567"))
+    return url.port or 80
+
+
+def _listens_on(proc, port):
+    try:
+        return any(conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
+                   for conn in proc.net_connections(kind="tcp"))
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return False
+
+
 def find_java_process(marker=JAR_MARKER):
-    """The java process whose command line runs the Todo Manager jar, or None."""
+    """The java process running the Todo Manager jar, or None. If several are
+    running, the one listening on the API's port is chosen."""
+    candidates = []
     for proc in psutil.process_iter(["name", "cmdline"]):
         try:
             name = (proc.info["name"] or "").lower()
@@ -38,9 +56,13 @@ def find_java_process(marker=JAR_MARKER):
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
         if "java" in name and marker in cmdline:
-            proc.cpu_percent(None)  # prime: the first call always returns 0.0
-            return proc
-    return None
+            candidates.append(proc)
+    if not candidates:
+        return None
+    port = api_port()
+    chosen = next((proc for proc in candidates if _listens_on(proc, port)), candidates[0])
+    chosen.cpu_percent(None)  # prime: the first call always returns 0.0
+    return chosen
 
 
 def java_stats(proc):

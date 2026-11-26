@@ -31,10 +31,11 @@ The script never starts or stops the jar. It runs four steps:
 4. Runs `analyze.py`, then prints a short summary: total runtime, number of timed
    requests, errors, monitor samples, number of charts and the output folder.
 
-A full run takes about 7 minutes on an M4 Pro (6.6 min of experiments plus about 20 s of analysis).
+A full run takes about 7.5 minutes on an M4 Pro: about 20 s of JVM warm-up,
+6.6 min of experiments and about 20 s of analysis.
 Any extra arguments are passed on to `perf_runner.py`. `RESULTS_DIR` changes the output folder.
 
-Smoke test (levels 1,10,50,100,500, k=5, 1 repeat, 0.3 s phases, about 25 s in total):
+Smoke test (levels 1,10,50,100,500, k=5, 1 repeat, 0.3 s phases, about 45 s in total including the warm-up):
 
 ```sh
 performance/run_all.sh --quick
@@ -55,7 +56,7 @@ Optional extra level: `--levels 1,5,10,50,75,100,200,300,400,500,600,700,800,900
 | `client.py` | Session-based request helper. Reuses `BASE_URL`, `TIMEOUT`, `items()` from `test/support.py` and the readiness check from `test/conftest.py` |
 | `random_data.py` | Seedable random payloads (`python performance/random_data.py --resource todos --count 3 --seed 1` previews them) |
 | `perf_runner.py` | The experiment runner (below) |
-| `monitor.py` | psutil sampler; started/stopped by `perf_runner.py --monitor`, or run on its own |
+| `monitor.py` | psutil sampler; started/stopped by `perf_runner.py --monitor`, or run on its own. If several Todo Manager JVMs are running, it measures the one listening on the API's port |
 | `analyze.py` | Builds the summaries and the charts |
 | `run_all.sh` | One command for the video: check, clear, run, analyse, summary |
 
@@ -68,6 +69,8 @@ Optional extra level: `--levels 1,5,10,50,75,100,200,300,400,500,600,700,800,900
 | `--k` | `20` | minimum timed operations per add/update/delete phase |
 | `--min-phase-s` | `0.5` | minimum duration of each add/update/delete phase (s) |
 | `--repeats` | `3` | full repeats per resource |
+| `--warmup-objects` | `1000` | objects per resource in the untimed JVM warm-up pass (0 skips it) |
+| `--warmup-ops` | `3000` | add/update/delete rounds per resource in that pass |
 | `--seed` | random (logged) | seed for payloads and id choice; reuse it to reproduce a run |
 | `--out` | `performance/results` | output folder (files are overwritten) |
 | `--monitor` | off | sample CPU/memory during the run |
@@ -77,8 +80,29 @@ Optional extra level: `--levels 1,5,10,50,75,100,200,300,400,500,600,700,800,900
 ## What the runner does
 
 1. Exits with a clear message if the server is not reachable (Part A's check).
-2. Warm-up: 20+ untimed create/amend/delete requests per resource (JVM warm-up).
-3. For each resource and each repeat, it first **deletes every object on the server,
+2. **JVM warm-up pass** (untimed, not recorded). For **all three** resources, it
+   populates to `--warmup-objects` (default 1000) objects, runs `--warmup-ops`
+   (default 3000) rounds of add, update and delete, then clears the server. This
+   takes about 20 s. The runner then waits until the JVM's CPU drops below 5%
+   (at most 30 s). The monitor starts only after both steps, so none of this
+   appears in any result, phase or sample. `--warmup-objects 0` skips the pass.
+
+   **Why.** The JVM compiles hot code after it has been called many times, so the
+   first experiment of a run also measures that compilation. Quick runs on a
+   freshly started JVM gave these JVM CPU readings for todos (the first resource)
+   at N=1:
+
+   | Warm-up | todos at N=1 | projects and categories |
+   |---|---|---|
+   | none (earlier full run) | 50–60% | about 17% |
+   | 1000 objects + 300 rounds | 87% | 15–28% |
+   | 1000 objects + 3000 rounds | 36% (25% at N=10, normal from N=50) | 15–17% |
+
+   A larger warm-up shrinks the effect but does not remove it. Treat todos JVM
+   CPU at N ≤ 10 with care in the report.
+3. Before each resource's experiment, 20+ more untimed create/amend/delete
+   requests on that resource.
+4. For each resource and each repeat, it first **deletes every object on the server,
    including the server's default objects** (2 todos, 1 project, 2 categories), so N
    is exact. Then for each level N, in ascending order:
 
@@ -96,7 +120,7 @@ Optional extra level: `--levels 1,5,10,50,75,100,200,300,400,500,600,700,800,900
    `--min-phase-s` seconds**. One request takes well under 1 ms, so k = 20 requests
    alone would finish between two monitor samples. The minimum duration puts
    several samples (about 5 with the defaults) inside every phase.
-4. At the end of each resource, everything it created is deleted.
+5. At the end of each resource, everything it created is deleted.
 
 Only the HTTP call is inside the `time.perf_counter()` bracket. A response with an
 unexpected status (201 for populate/add, 200 for update/delete) or a connection

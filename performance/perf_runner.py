@@ -62,6 +62,8 @@ MEASURED_OPERATIONS = ("add", "update", "delete")
 EXPECTED_STATUS = {"populate": 201, "add": 201, "update": 200, "delete": 200}
 WARMUP_REQUESTS = 20  # per resource, excluded from results
 MAX_FAILURES = 50     # consecutive failures before a phase gives up
+SETTLE_THRESHOLD_PCT = 5.0  # after the JVM warm-up, wait for JVM CPU (% of one core) below this ...
+SETTLE_TIMEOUT_S = 30.0     # ... but never longer than this
 
 TIMING_FIELDS = ["timestamp", "run_id", "repeat", "resource", "operation", "N", "op_index",
                  "elapsed_ms", "status_code"]
@@ -254,15 +256,54 @@ class ResourceExperiment:
         self.ids = []
 
 
-def warm_up(client, data, resources):
-    """Throwaway create/amend/delete cycles so the JVM is warm before measuring."""
-    for resource in resources:
-        sent = 0
-        while sent < WARMUP_REQUESTS:
-            object_id = client.create(resource, data.payload(resource))
-            client.request("POST", f"/{resource}/{object_id}", data.payload(resource))
-            client.delete(resource, object_id)
-            sent += 3
+def jvm_warm_up(client, data, n_objects, ops):
+    """Untimed warm-up of the whole JVM before anything is measured or monitored.
+
+    For every resource (always all three): populate to n_objects, run `ops` rounds
+    of add (+ delete), update and delete (+ recreate) on random ids, then clear
+    the server. Nothing is recorded. Without this, the first experiment of a run
+    measures JIT compilation (high JVM CPU at small N for whichever resource runs first).
+    """
+    rng = data.rng
+    for resource in RESOURCES:
+        ids = [client.create(resource, data.payload(resource)) for _ in range(n_objects)]
+        for _ in range(ops if ids else 0):
+            client.delete(resource, client.create(resource, data.payload(resource)))
+            client.request("POST", f"/{resource}/{rng.choice(ids)}", data.payload(resource))
+            position = rng.randrange(len(ids))
+            client.delete(resource, ids[position])
+            ids[position] = client.create(resource, data.payload(resource))
+    client.wipe()
+
+
+def settle(threshold_pct, timeout_s, interval_s=0.5, calm_samples=3):
+    """Wait until the server JVM's CPU stays below threshold_pct for calm_samples
+    consecutive readings (JIT compiler and GC threads finishing after the warm-up).
+    Returns (seconds waited, last reading); (0, None) if the JVM cannot be found."""
+    java = find_java_process()
+    if java is None:
+        return 0.0, None
+    clock, calm, reading = time.perf_counter(), 0, None
+    while time.perf_counter() - clock < timeout_s:
+        time.sleep(interval_s)
+        try:
+            reading = java.cpu_percent(None)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return time.perf_counter() - clock, None
+        calm = calm + 1 if reading < threshold_pct else 0
+        if calm >= calm_samples:
+            break
+    return time.perf_counter() - clock, reading
+
+
+def warm_up(client, data, resource):
+    """Short per-experiment warm-up: throwaway create/amend/delete cycles on one resource."""
+    sent = 0
+    while sent < WARMUP_REQUESTS:
+        object_id = client.create(resource, data.payload(resource))
+        client.request("POST", f"/{resource}/{object_id}", data.payload(resource))
+        client.delete(resource, object_id)
+        sent += 3
 
 
 # --------------------------------------------------------------------------- monitor & metadata
@@ -332,6 +373,12 @@ def parse_args():
     parser.add_argument("--min-phase-s", type=float, dest="min_phase_s",
                         help=f"minimum duration of each add/update/delete phase in s (default {DEFAULTS['min_phase_s']})")
     parser.add_argument("--repeats", type=int, help=f"repeats per resource (default {DEFAULTS['repeats']})")
+    parser.add_argument("--warmup-objects", type=int, default=1000, dest="warmup_objects",
+                        help="objects per resource in the untimed JVM warm-up pass before measuring "
+                             "(default 1000; 0 skips the pass)")
+    parser.add_argument("--warmup-ops", type=int, default=3000, dest="warmup_ops",
+                        help="add/update/delete rounds per resource in that warm-up pass (default 3000; "
+                             "on a cold JVM 300 rounds left todos at ~87%% JVM CPU at N=1, 3000 at ~36%%)")
     parser.add_argument("--seed", type=int, help="random seed (default: chosen at random and logged)")
     parser.add_argument("--out", type=Path, default=HERE / "results", help="output directory")
     parser.add_argument("--monitor", action="store_true", help="sample CPU/memory with monitor.py during the run")
@@ -351,6 +398,8 @@ def parse_args():
         parser.error("--levels must be positive and strictly increasing")
     if args.k <= 0 or args.repeats <= 0 or args.min_phase_s < 0 or args.interval <= 0:
         parser.error("--k, --repeats and --interval must be positive; --min-phase-s must be >= 0")
+    if args.warmup_objects < 0 or args.warmup_ops < 0:
+        parser.error("--warmup-objects and --warmup-ops must be >= 0")
     return args
 
 
@@ -372,7 +421,9 @@ def main():
             "base_url": BASE_URL, "resources": resources, "levels": args.levels, "k": args.k,
             "min_phase_s": args.min_phase_s, "repeats": args.repeats, "seed": args.seed,
             "monitor": args.monitor, "sample_interval_s": args.interval,
-            "warmup_requests_per_resource": WARMUP_REQUESTS,
+            "jvm_warmup": {"objects_per_resource": args.warmup_objects, "rounds_per_resource": args.warmup_ops,
+                           "resources": list(RESOURCES)},
+            "warmup_requests_per_experiment": WARMUP_REQUESTS,
             "operations": {"populate": "POST /<resource>", "add": "POST /<resource>",
                            "update": "POST /<resource>/:id (amend, all fields)",
                            "delete": "DELETE /<resource>/:id"},
@@ -391,13 +442,26 @@ def main():
     client = ApiClient()
     data = RandomData(args.seed)
     recorder = Recorder(args.out, run_id)
-    monitor = start_monitor(args.out, args.interval) if args.monitor else None
+    monitor = None
     wall_start = time.perf_counter()
     experiment = None
     try:
-        warm_up(client, data, resources)
-        print(f"Warm-up done ({WARMUP_REQUESTS}+ requests per resource, not recorded)")
+        if args.warmup_objects:
+            print(f"JVM warm-up: {args.warmup_objects} objects + {args.warmup_ops} add/update/delete rounds "
+                  f"per resource (todos, projects, categories); not recorded ...")
+            clock = time.perf_counter()
+            jvm_warm_up(client, data, args.warmup_objects, args.warmup_ops)
+            print(f"JVM warm-up done in {time.perf_counter() - clock:.1f} s; server cleared")
+            waited, reading = settle(SETTLE_THRESHOLD_PCT, SETTLE_TIMEOUT_S)
+            state = "JVM not found" if reading is None else f"JVM CPU {reading:.1f}%"
+            print(f"Waited {waited:.1f} s for the JVM to settle ({state}; target < {SETTLE_THRESHOLD_PCT}%)")
+            info["jvm_settle"] = {"waited_s": round(waited, 1),
+                                  "final_java_cpu_pct": None if reading is None else round(reading, 1)}
+        # Started after the warm-up pass, so no warm-up sample is in system_samples.csv.
+        monitor = start_monitor(args.out, args.interval) if args.monitor else None
         for resource in resources:
+            warm_up(client, data, resource)
+            print(f"{resource}: warm-up done ({WARMUP_REQUESTS}+ requests, not recorded)")
             for repeat in range(1, args.repeats + 1):
                 client.wipe()  # clean state, including the server's default objects
                 experiment = ResourceExperiment(client, recorder, data, resource, args, repeat)
